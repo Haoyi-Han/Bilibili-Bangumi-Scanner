@@ -1,27 +1,26 @@
 import requests, argparse
 import os, time, logging
-from queue import Queue
 from threading import Thread
 from bs4 import BeautifulSoup
-import rich.progress as rpg
+from rich.progress import Progress, Task, Text, ProgressColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn, TimeRemainingColumn
 
-class NaiveTransferSpeedColumn(rpg.ProgressColumn):
-    def render(self, task: rpg.Task) -> rpg.Text:
+class NaiveTransferSpeedColumn(ProgressColumn):
+    def render(self, task: Task) -> Text:
         speed = task.finished_speed or task.speed
         if speed is None:
-            return rpg.Text("?", style="progress.data.speed")
-        return rpg.Text(f"({speed:>.2f}/s)", style="progress.data.speed")
+            return Text("?", style="progress.data.speed")
+        return Text(f"({speed:>.2f}/s)", style="progress.data.speed")
 
-progress = rpg.Progress(
-    rpg.TextColumn('[green]{task.description}'),
-    rpg.BarColumn(),
-    rpg.MofNCompleteColumn(),
-    rpg.TextColumn('[green][{task.percentage:>3.1f}%]'),
+progress = Progress(
+    TextColumn('[green]{task.description}'),
+    BarColumn(),
+    MofNCompleteColumn(),
+    TextColumn('[green][{task.percentage:>3.1f}%]'),
     NaiveTransferSpeedColumn(),
     'ETD:',
-    rpg.TimeElapsedColumn(),
+    TimeElapsedColumn(),
     'ETA:',
-    rpg.TimeRemainingColumn(),
+    TimeRemainingColumn(),
     auto_refresh=True
 )
 
