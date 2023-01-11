@@ -1,4 +1,5 @@
 import requests
+import json
 import os, time, logging, argparse
 from threading import Thread
 from bs4 import BeautifulSoup
@@ -53,7 +54,15 @@ def extractPageInfo(md_key: int) -> BiliBGM:
     meta = soup.find_all(name='meta', attrs={'property': 'og:title'})
     if meta:
         return BiliBGM(md_key, meta[0].attrs['content'])
-
+    
+def extractPageInfoByAPI(md_key: int) -> BiliBGM:
+    response = sess.get(url='http://api.bilibili.com/pgc/review/user?media_id='+str(md_key))
+    jsoninfo = response.content.decode('utf-8')
+    jsoninfo = json.loads(jsoninfo)
+    if jsoninfo['code'] == -404:
+        return
+    return BiliBGM(md_key, jsoninfo['result']['media']['title'])
+    
 # Data & Cache Treatment    
 def loadData(file_path: str) -> list[BiliBGM]:
     loaded_bgm_data = []
@@ -74,15 +83,19 @@ def clearCache(cache_file_list: list[str]):
 
 # Thread Configuration        
 class ScanThread(Thread):
-    def __init__(self, begin_num: int, end_num: int, sleep_step: int):
+    def __init__(self, begin_num: int, end_num: int, sleep_step: int, use_api: bool=True):
         super().__init__()
         self.begin_num = begin_num
         self.end_num = end_num
         self.sleep_step = sleep_step
         self.bgm_data = []
+        self.use_api = use_api
     def run(self):
         for md_key in range(self.begin_num, self.end_num):
-            new_BiliBGM = extractPageInfo(md_key)
+            if self.use_api:
+                new_BiliBGM = extractPageInfoByAPI(md_key)
+            else:
+                new_BiliBGM = extractPageInfo(md_key)
             if new_BiliBGM:
                 self.bgm_data.append(new_BiliBGM)
             no_diff = md_key - self.begin_num + 1
@@ -102,6 +115,7 @@ if __name__ == '__main__':
     parser.add_argument('-S', '--sleep-step', nargs='?', type=int, const=200, default=200, help='step number for every sleep')
     parser.add_argument('-C', '--cache-step', nargs='?', type=int, const=1500, default=1500, help='step number for every cache')
     parser.add_argument('-T', '--thread-number', nargs='?', type=int, const=10, default=10, help='max thread number')
+    parser.add_argument('-N', '--no-api', action='store_true', help='disable api')
     parser.add_argument('-L', '--log', action='store_true', help='enable logging')
     
     args = parser.parse_args()
@@ -118,7 +132,7 @@ if __name__ == '__main__':
     progress.start()
     task = progress.add_task(description='BiliBGM', total=(end_num - begin_num))
     thread_IDs = [*range(begin_num, end_num, cache_step), end_num]
-    sub_threads = [ScanThread(thread_IDs[idx], thread_IDs[idx + 1], sleep_step) for idx in range(len(thread_IDs) - 1)]
+    sub_threads = [ScanThread(thread_IDs[idx], thread_IDs[idx + 1], sleep_step, ~(args.no_api)) for idx in range(len(thread_IDs) - 1)]
     for tid in range(0, len(sub_threads), thread_no):
         for t in sub_threads[tid:tid + thread_no]:
             t.start()
