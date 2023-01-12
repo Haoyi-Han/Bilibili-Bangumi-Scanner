@@ -4,6 +4,7 @@ import os, time, logging, argparse
 from threading import Thread
 from bs4 import BeautifulSoup
 from rich.progress import Progress, Task, Text, ProgressColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn, TimeRemainingColumn
+from typing import Optional
 
 # Progress Bar Configuration
 class NaiveTransferSpeedColumn(ProgressColumn):
@@ -33,7 +34,7 @@ sess.headers = {'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWe
 sess.mount('https://', adapter=requests.adapters.HTTPAdapter(max_retries=max_retries))
 
 # Temperary Filename List (Global Var)
-tmp_file_list = []
+tmp_file_list: list[str] = []
 
 # Bangumi Info Class
 class BiliBGM:
@@ -41,41 +42,52 @@ class BiliBGM:
         self.md_key = md_key
         self.title = title
         self.url = 'https://www.bilibili.com/bangumi/media/md' + str(self.md_key)
-    def __str__(self):
+    def __str__(self) -> str:
         return f'{self.md_key}\t{self.title}\t{self.url}'
+    def to_str(self, delimiter: str='\t') -> str:
+        return f'{self.md_key}{delimiter}{self.title}{delimiter}{self.url}'
 
 # Page Info Extractor     
-def extractPageInfo(md_key: int) -> BiliBGM:
-    response = sess.get(url='https://www.bilibili.com/bangumi/media/md'+str(md_key))
+def extractPageInfo(md_key: int) -> Optional[BiliBGM]:
+    try:
+        response = sess.get(url='https://www.bilibili.com/bangumi/media/md'+str(md_key))
+    except (ConnectionError, ConnectionAbortedError, ConnectionRefusedError, ConnectionResetError) as e:
+        time.sleep(10)
+        response = sess.get(url='https://www.bilibili.com/bangumi/media/md'+str(md_key))
     if response.status_code == 404:
-        return
+        return None
     html = response.content.decode('utf-8')
     soup = BeautifulSoup(html, 'lxml')
     meta = soup.find_all(name='meta', attrs={'property': 'og:title'})
-    if meta:
-        return BiliBGM(md_key, meta[0].attrs['content'])
+    if not meta:
+        return None
+    return BiliBGM(md_key, meta[0].attrs['content'])
     
-def extractPageInfoByAPI(md_key: int) -> BiliBGM:
-    response = sess.get(url='http://api.bilibili.com/pgc/review/user?media_id='+str(md_key))
+def extractPageInfoByAPI(md_key: int) -> Optional[BiliBGM]:
+    try:
+        response = sess.get(url='http://api.bilibili.com/pgc/review/user?media_id='+str(md_key))
+    except (ConnectionError, ConnectionAbortedError, ConnectionRefusedError, ConnectionResetError) as e:
+        time.sleep(10)
+        response = sess.get(url='http://api.bilibili.com/pgc/review/user?media_id='+str(md_key))
     jsoninfo = response.content.decode('utf-8')
-    jsoninfo = json.loads(jsoninfo)
-    if jsoninfo['code'] == -404:
-        return
-    return BiliBGM(md_key, jsoninfo['result']['media']['title'])
+    jsoninfodic = json.loads(jsoninfo)
+    if jsoninfodic['code'] == -404:
+        return None
+    return BiliBGM(md_key, jsoninfodic['result']['media']['title'])
     
 # Data & Cache Treatment    
 def loadData(file_path: str) -> list[BiliBGM]:
-    loaded_bgm_data = []
+    loaded_bgm_data: list[BiliBGM] = []
     with open(file_path, 'r', encoding='utf-8') as in_fp:
         for info in in_fp.readlines():
             md_key, title, _ = info.split('\t')
-            loaded_bgm_data.append(BiliBGM(md_key, title))
+            loaded_bgm_data.append(BiliBGM(int(md_key), title))
     return loaded_bgm_data
 
-def saveData(bgm_data: list[BiliBGM], file_name: str):
+def saveData(bgm_data: list[BiliBGM], file_name: str, delimiter: str='\t'):
     with open('./' + file_name, 'w', encoding='utf-8') as out_fp:
         for bgm in bgm_data:
-            print(bgm, file=out_fp)
+            print(bgm.to_str(delimiter=delimiter), file=out_fp)
 
 def clearCache(cache_file_list: list[str]):
     for cf in cache_file_list:
@@ -88,7 +100,7 @@ class ScanThread(Thread):
         self.begin_num = begin_num
         self.end_num = end_num
         self.sleep_step = sleep_step
-        self.bgm_data = []
+        self.bgm_data: list[BiliBGM] = []
         self.use_api = use_api
     def run(self):
         for md_key in range(self.begin_num, self.end_num):
@@ -112,6 +124,8 @@ if __name__ == '__main__':
     
     parser.add_argument('begin_num', type=int, help='beginning index')
     parser.add_argument('end_num', type=int, help='ending index (not included)')
+    parser.add_argument('-O', '--output-name', nargs='?', type=str, const='bangumi_titles.txt', default='bangumi_titles.txt', help='file name of output data')
+    parser.add_argument('-D', '--delimiter', nargs='?', type=str, const='\t', default='\t', help='separator of columns')
     parser.add_argument('-S', '--sleep-step', nargs='?', type=int, const=200, default=200, help='step number for every sleep')
     parser.add_argument('-C', '--cache-step', nargs='?', type=int, const=1500, default=1500, help='step number for every cache')
     parser.add_argument('-T', '--thread-number', nargs='?', type=int, const=10, default=10, help='max thread number')
@@ -122,6 +136,8 @@ if __name__ == '__main__':
     
     begin_num: int = args.begin_num
     end_num: int = args.end_num
+    target_file_name: str = args.output_name
+    delimiter: str = args.delimiter
     sleep_step: int = args.sleep_step
     cache_step: int = args.cache_step
     thread_no: int = args.thread_number
@@ -148,8 +164,7 @@ if __name__ == '__main__':
             bgm_data += loadData('./' + tmp_name)
         logging.info('Cache all read.')
     
-    target_file_name: str = 'bangumi_titles.txt'
-    saveData(bgm_data, target_file_name)
+    saveData(bgm_data, target_file_name, delimiter=delimiter)
     logging.info('Data saved to text file.')
     
     clearCache(tmp_file_list)
